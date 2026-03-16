@@ -21,7 +21,13 @@ fastify.get('/v1/units/:serialNumber', async (request, reply) => {
     return reply.status(404).send({ error: 'Serial number not found' })
   }
 
-  return unit
+  // Format breadcrumb path: "WH-01/ZONE-A/ASRS-01/BIN-101" -> "WH-01 > ZONE-A > ASRS-01 > BIN-101"
+  const locationPath = unit.location?.path?.replace(/\//g, ' > ') || 'IN_TRANSIT'
+
+  return {
+    ...unit,
+    locationPath
+  }
 })
 
 // Location Navigation: GET /v1/locations/:code
