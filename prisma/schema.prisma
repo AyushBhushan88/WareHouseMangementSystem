@@ -1,35 +1,16 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
-enum LocationType {
-  WAREHOUSE
-  ZONE
-  ASRS
-  BIN
-}
-
-enum UnitStatus {
-  INBOUND
-  IN_STOCK
-  ALLOCATED
-  PICKED
-  SHIPPED
-  QUARANTINE
-}
-
-model SKU {
+model Sku {
   id          String   @id @default(uuid())
   code        String   @unique
   name        String
@@ -42,7 +23,7 @@ model SKU {
 model Location {
   id          String   @id @default(uuid())
   code        String   @unique
-  type        LocationType
+  type        String   // WAREHOUSE, ZONE, ASRS, BIN
   parentId    String?
   parent      Location? @relation("LocationHierarchy", fields: [parentId], references: [id])
   children    Location[] @relation("LocationHierarchy")
@@ -58,10 +39,10 @@ model SerializedUnit {
   id           String     @id @default(uuid())
   serialNumber String     @unique
   skuId        String
-  sku          SKU        @relation(fields: [skuId], references: [id])
+  sku          Sku        @relation(fields: [skuId], references: [id])
   locationId   String?
   location     Location?  @relation(fields: [locationId], references: [id])
-  status       UnitStatus @default(INBOUND)
+  status       String     @default("INBOUND") // INBOUND, IN_STOCK, ALLOCATED, PICKED, SHIPPED, QUARANTINE
   lastSeenAt   DateTime   @default(now())
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
