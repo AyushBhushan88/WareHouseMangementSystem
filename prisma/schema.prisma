@@ -1,0 +1,70 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LocationType {
+  WAREHOUSE
+  ZONE
+  ASRS
+  BIN
+}
+
+enum UnitStatus {
+  INBOUND
+  IN_STOCK
+  ALLOCATED
+  PICKED
+  SHIPPED
+  QUARANTINE
+}
+
+model SKU {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  units       SerializedUnit[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Location {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  type        LocationType
+  parentId    String?
+  parent      Location? @relation("LocationHierarchy", fields: [parentId], references: [id])
+  children    Location[] @relation("LocationHierarchy")
+  path        String   // Materialized path, e.g., "WH-01/ZONE-A/ASRS-01/BIN-102"
+  units       SerializedUnit[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([path])
+}
+
+model SerializedUnit {
+  id           String     @id @default(uuid())
+  serialNumber String     @unique
+  skuId        String
+  sku          SKU        @relation(fields: [skuId], references: [id])
+  locationId   String?
+  location     Location?  @relation(fields: [locationId], references: [id])
+  status       UnitStatus @default(INBOUND)
+  lastSeenAt   DateTime   @default(now())
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([status])
+}
