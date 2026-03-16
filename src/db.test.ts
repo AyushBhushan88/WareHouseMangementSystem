@@ -8,7 +8,7 @@ describe('Prisma Extension Status Enforcement', () => {
 
   beforeAll(async () => {
     // Ensure we have some data
-    const sku = await prisma.sku.upsert({
+    const sku = await (prisma as any).SKU.upsert({
       where: { code: 'TEST-SKU' },
       update: {},
       create: { code: 'TEST-SKU', name: 'Test SKU' }
@@ -23,9 +23,11 @@ describe('Prisma Extension Status Enforcement', () => {
     binId = loc.id
 
     // Cleanup existing test unit if any
-    await prisma.serializedUnit.deleteMany({
-      where: { serialNumber: 'TEST-SER-001' }
-    })
+    const existing = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } })
+    if (existing) {
+      await prisma.statusAuditLog.deleteMany({ where: { unitId: existing.id } })
+      await prisma.serializedUnit.delete({ where: { id: existing.id } })
+    }
   })
 
   it('should allow valid transition INBOUND -> IN_STOCK', async () => {
@@ -55,8 +57,10 @@ describe('Prisma Extension Status Enforcement', () => {
   })
 
   afterAll(async () => {
-    await prisma.serializedUnit.deleteMany({
-      where: { serialNumber: 'TEST-SER-001' }
-    })
+    const unit = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } })
+    if (unit) {
+      await prisma.statusAuditLog.deleteMany({ where: { unitId: unit.id } })
+      await prisma.serializedUnit.delete({ where: { id: unit.id } })
+    }
   })
 })

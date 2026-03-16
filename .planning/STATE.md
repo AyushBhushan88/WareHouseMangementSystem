@@ -4,8 +4,8 @@
 **Phase 1: Core Data Foundation**
 
 ## Roadmap Status
-- [ ] Phase 1: Core Data Foundation (Active)
-- [ ] Phase 2: Serial Capture & Identification (Pending)
+- [x] Phase 1: Core Data Foundation (Completed)
+- [ ] Phase 2: Serial Capture & Identification (Active)
 - [ ] Phase 3: ERP Integration (Inbound) (Pending)
 - [ ] Phase 4: Inbound Receiving Workflows (Pending)
 - [ ] Phase 5: ASRS Orchestration (Inbound) (Pending)

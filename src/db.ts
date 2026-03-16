@@ -9,18 +9,36 @@ export const prisma = prismaClient.$extends({
       async update({ args, query }) {
         const { where, data } = args
         
-        // If status is being updated, validate the transition
+        // Fetch current state for validation and logging
+        const currentUnit = await prismaClient.serializedUnit.findUnique({
+          where,
+          select: { id: true, status: true }
+        })
+
+        if (!currentUnit) return query(args)
+
+        // If status is being updated, validate and log
         if (data.status && typeof data.status === 'string') {
           const nextStatus = data.status as UnitStatus
+          const fromStatus = currentUnit.status as UnitStatus
           
-          // Fetch current status
-          const currentUnit = await prismaClient.serializedUnit.findUnique({
-            where,
-            select: { status: true }
-          })
-          
-          if (currentUnit) {
-            StatusManager.validateTransition(currentUnit.status as UnitStatus, nextStatus)
+          if (fromStatus !== nextStatus) {
+            StatusManager.validateTransition(fromStatus, nextStatus)
+            
+            // Perform the update first
+            const result = await query(args)
+            
+            // Log the transition
+            await prismaClient.statusAuditLog.create({
+              data: {
+                unitId: currentUnit.id,
+                fromStatus,
+                toStatus: nextStatus,
+                changedBy: 'SYSTEM' // Could be passed via context in the future
+              }
+            })
+            
+            return result
           }
         }
         
@@ -29,22 +47,27 @@ export const prisma = prismaClient.$extends({
       async updateMany({ args, query }) {
         const { where, data } = args
         
-        // updateMany is trickier because we can't easily fetch current statuses for all matches
-        // For Phase 1, we'll enforce that bulk updates must result in a valid transition 
-        // for ALL items matching the criteria.
         if (data.status && typeof data.status === 'string') {
           const nextStatus = data.status as UnitStatus
           
           const units = await prismaClient.serializedUnit.findMany({
             where,
-            select: { status: true, serialNumber: true }
+            select: { id: true, status: true, serialNumber: true }
           })
           
           for (const unit of units) {
-            try {
+            if (unit.status !== nextStatus) {
               StatusManager.validateTransition(unit.status as UnitStatus, nextStatus)
-            } catch (err: any) {
-              throw new Error(`Bulk update failed for ${unit.serialNumber}: ${err.message}`)
+              
+              // Log for each unit (performance consideration for huge batches, but okay for Phase 2)
+              await prismaClient.statusAuditLog.create({
+                data: {
+                  unitId: unit.id,
+                  fromStatus: unit.status,
+                  toStatus: nextStatus,
+                  changedBy: 'SYSTEM_BULK'
+                }
+              })
             }
           }
         }

@@ -10,7 +10,7 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-model Sku {
+model SKU {
   id          String   @id @default(uuid())
   code        String   @unique
   name        String
@@ -36,16 +36,34 @@ model Location {
 }
 
 model SerializedUnit {
-  id           String     @id @default(uuid())
-  serialNumber String     @unique
+  id           String           @id @default(uuid())
+  serialNumber String           @unique
   skuId        String
-  sku          Sku        @relation(fields: [skuId], references: [id])
+  sku          SKU              @relation(fields: [skuId], references: [id])
   locationId   String?
-  location     Location?  @relation(fields: [locationId], references: [id])
-  status       String     @default("INBOUND") // INBOUND, IN_STOCK, ALLOCATED, PICKED, SHIPPED, QUARANTINE
-  lastSeenAt   DateTime   @default(now())
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  location     Location?        @relation(fields: [locationId], references: [id])
+  status       String           @default("INBOUND") // INBOUND, IN_STOCK, ALLOCATED, PICKED, SHIPPED, QUARANTINE
+  barcode      String?          // Case/Pallet barcode
+  tagId        String?          // RFID tag ID
+  metadata     String?          // JSON metadata (using String for SQLite compatibility)
+  auditLogs    StatusAuditLog[]
+  lastSeenAt   DateTime         @default(now())
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 
   @@index([status])
+  @@index([barcode])
+  @@index([tagId])
+}
+
+model StatusAuditLog {
+  id          String         @id @default(uuid())
+  unitId      String
+  unit        SerializedUnit @relation(fields: [unitId], references: [id])
+  fromStatus  String
+  toStatus    String
+  changedBy   String?        // User ID or System Service
+  timestamp   DateTime       @default(now())
+
+  @@index([unitId])
 }

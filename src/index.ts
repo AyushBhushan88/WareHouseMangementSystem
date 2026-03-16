@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 import { prisma } from './db.js'
 import { StatusManager, UnitStatus } from './services/status-manager.js'
+import { SerialIdentifier } from './services/serial-identifier.js'
 
 const fastify = Fastify({
   logger: true
@@ -28,6 +29,74 @@ fastify.get('/v1/units/:serialNumber', async (request, reply) => {
     ...unit,
     locationPath
   }
+})
+
+// Unit Scan/Update: PATCH /v1/units/:identifier/scan
+fastify.patch('/v1/units/:identifier/scan', async (request, reply) => {
+  const { identifier } = request.params as { identifier: string }
+  const { status, locationCode, barcode, tagId } = request.body as { 
+    status: UnitStatus, 
+    locationCode?: string,
+    barcode?: string,
+    tagId?: string
+  }
+
+  // 1. Identify and parse the serial from the identifier (could be a barcode)
+  const serialNumber = SerialIdentifier.parse(identifier)
+  SerialIdentifier.validate(serialNumber)
+
+  // 2. Find the unit
+  const unit = await prisma.serializedUnit.findUnique({
+    where: { serialNumber }
+  })
+
+  if (!unit) {
+    return reply.status(404).send({ error: 'Unit not found' })
+  }
+
+  // 3. Resolve location if provided
+  let locationId = unit.locationId
+  if (locationCode) {
+    const loc = await prisma.location.findUnique({ where: { code: locationCode } })
+    if (!loc) return reply.status(400).send({ error: 'Invalid location code' })
+    locationId = loc.id
+  }
+
+  // 4. Update the unit (Status transition is enforced in prisma extension)
+  try {
+    const updatedUnit = await prisma.serializedUnit.update({
+      where: { id: unit.id },
+      data: { 
+        status, 
+        locationId,
+        barcode: barcode || unit.barcode,
+        tagId: tagId || unit.tagId,
+        lastSeenAt: new Date()
+      }
+    })
+    return updatedUnit
+  } catch (err: any) {
+    return reply.status(400).send({ error: err.message })
+  }
+})
+
+// Unit History: GET /v1/units/:serialNumber/history
+fastify.get('/v1/units/:serialNumber/history', async (request, reply) => {
+  const { serialNumber } = request.params as { serialNumber: string }
+  const unit = await prisma.serializedUnit.findUnique({
+    where: { serialNumber },
+    include: {
+      auditLogs: {
+        orderBy: { timestamp: 'desc' }
+      }
+    }
+  })
+
+  if (!unit) {
+    return reply.status(404).send({ error: 'Unit not found' })
+  }
+
+  return unit.auditLogs
 })
 
 // Location Navigation: GET /v1/locations/:code
