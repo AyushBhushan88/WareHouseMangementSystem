@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import { prisma } from './db.js'
 import { StatusManager, UnitStatus } from './services/status-manager.js'
 import { SerialIdentifier } from './services/serial-identifier.js'
+import { ReceivingService } from './services/receiving-service.js'
 
 const fastify = Fastify({
   logger: true
@@ -14,7 +15,8 @@ fastify.get('/v1/units/:serialNumber', async (request, reply) => {
     where: { serialNumber },
     include: {
       sku: true,
-      location: true
+      location: true,
+      inboundShipment: true
     }
   })
 
@@ -34,50 +36,108 @@ fastify.get('/v1/units/:serialNumber', async (request, reply) => {
 // Unit Scan/Update: PATCH /v1/units/:identifier/scan
 fastify.patch('/v1/units/:identifier/scan', async (request, reply) => {
   const { identifier } = request.params as { identifier: string }
-  const { status, locationCode, barcode, tagId } = request.body as { 
+  const { status, locationCode, barcode, tagId, asnExternalId } = request.body as { 
     status: UnitStatus, 
     locationCode?: string,
     barcode?: string,
-    tagId?: string
+    tagId?: string,
+    asnExternalId?: string
   }
 
   // 1. Identify and parse the serial from the identifier (could be a barcode)
   const serialNumber = SerialIdentifier.parse(identifier)
   SerialIdentifier.validate(serialNumber)
 
-  // 2. Find the unit
-  const unit = await prisma.serializedUnit.findUnique({
-    where: { serialNumber }
-  })
-
-  if (!unit) {
-    return reply.status(404).send({ error: 'Unit not found' })
-  }
-
-  // 3. Resolve location if provided
-  let locationId = unit.locationId
+  // 2. Resolve location if provided
+  let locationId: string | undefined
   if (locationCode) {
     const loc = await prisma.location.findUnique({ where: { code: locationCode } })
     if (!loc) return reply.status(400).send({ error: 'Invalid location code' })
     locationId = loc.id
   }
 
-  // 4. Update the unit (Status transition is enforced in prisma extension)
+  // 3. Handle explicit ASN receiving if requested
+  if (asnExternalId && status === UnitStatus.IN_STOCK) {
+    try {
+      const receivedUnit = await ReceivingService.receiveUnit(serialNumber, asnExternalId, locationId)
+      return receivedUnit
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message })
+    }
+  }
+
+  // 4. Fallback to generic scan/update
+  const unit = await prisma.serializedUnit.findUnique({ where: { serialNumber } })
+  if (!unit) return reply.status(404).send({ error: 'Unit not found' })
+
   try {
-    const updatedUnit = await prisma.serializedUnit.update({
-      where: { id: unit.id },
-      data: { 
-        status, 
-        locationId,
-        barcode: barcode || unit.barcode,
-        tagId: tagId || unit.tagId,
-        lastSeenAt: new Date()
+    return await prisma.$transaction(async (tx) => {
+      if (status) {
+        await StatusManager.updateStatus(tx, unit.id, status, 'API_SCAN')
       }
+
+      const updatedUnit = await tx.serializedUnit.update({
+        where: { id: unit.id },
+        data: {
+          locationId: locationId || unit.locationId,
+          barcode: barcode || unit.barcode,
+          tagId: tagId || unit.tagId,
+          lastSeenAt: new Date()
+        },
+        include: { sku: true, location: true }
+      })
+      return updatedUnit
     })
-    return updatedUnit
   } catch (err: any) {
     return reply.status(400).send({ error: err.message })
   }
+  })
+// ERP Webhook: POST /v1/integrations/erp/asn
+fastify.post('/v1/integrations/erp/asn', async (request, reply) => {
+  const { externalId, vendor, items } = request.body as {
+    externalId: string,
+    vendor: string,
+    items: Array<{ skuCode: string, expectedQty: number }>
+  }
+
+  try {
+    const shipment = await prisma.inboundShipment.create({
+      data: {
+        externalId,
+        vendor,
+        status: 'PENDING',
+        items: {
+          create: await Promise.all(items.map(async item => {
+            const sku = await prisma.sKU.findUnique({ where: { code: item.skuCode } })
+            if (!sku) throw new Error(`SKU not found: ${item.skuCode}`)
+            return {
+              skuId: sku.id,
+              expectedQty: item.expectedQty
+            }
+          }))
+        }
+      },
+      include: { items: true }
+    })
+    return shipment
+  } catch (err: any) {
+    return reply.status(400).send({ error: err.message })
+  }
+})
+
+// Inbound Shipment Detail: GET /v1/inbound/shipments/:externalId
+fastify.get('/v1/inbound/shipments/:externalId', async (request, reply) => {
+  const { externalId } = request.params as { externalId: string }
+  const shipment = await prisma.inboundShipment.findUnique({
+    where: { externalId },
+    include: {
+      items: { include: { sku: true } },
+      units: true
+    }
+  })
+
+  if (!shipment) return reply.status(404).send({ error: 'ASN not found' })
+  return shipment
 })
 
 // Unit History: GET /v1/units/:serialNumber/history

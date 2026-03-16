@@ -7,17 +7,18 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = "file:./dev.db?connection_limit=1&socket_timeout=5000"
 }
 
 model SKU {
-  id          String   @id @default(uuid())
-  code        String   @unique
-  name        String
-  description String?
-  units       SerializedUnit[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String           @id @default(uuid())
+  code         String           @unique
+  name         String
+  description  String?
+  units        SerializedUnit[]
+  inboundItems InboundItem[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 }
 
 model Location {
@@ -36,24 +37,53 @@ model Location {
 }
 
 model SerializedUnit {
-  id           String           @id @default(uuid())
-  serialNumber String           @unique
-  skuId        String
-  sku          SKU              @relation(fields: [skuId], references: [id])
-  locationId   String?
-  location     Location?        @relation(fields: [locationId], references: [id])
-  status       String           @default("INBOUND") // INBOUND, IN_STOCK, ALLOCATED, PICKED, SHIPPED, QUARANTINE
-  barcode      String?          // Case/Pallet barcode
-  tagId        String?          // RFID tag ID
-  metadata     String?          // JSON metadata (using String for SQLite compatibility)
-  auditLogs    StatusAuditLog[]
-  lastSeenAt   DateTime         @default(now())
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  id                String           @id @default(uuid())
+  serialNumber      String           @unique
+  skuId             String
+  sku               SKU              @relation(fields: [skuId], references: [id])
+  locationId        String?
+  location          Location?        @relation(fields: [locationId], references: [id])
+  inboundShipmentId String?
+  inboundShipment   InboundShipment? @relation(fields: [inboundShipmentId], references: [id])
+  status            String           @default("INBOUND") // INBOUND, IN_STOCK, ALLOCATED, PICKED, SHIPPED, QUARANTINE
+  barcode           String?          // Case/Pallet barcode
+  tagId             String?          // RFID tag ID
+  metadata          String?          // JSON metadata (using String for SQLite compatibility)
+  auditLogs         StatusAuditLog[]
+  lastSeenAt        DateTime         @default(now())
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@index([status])
   @@index([barcode])
   @@index([tagId])
+  @@index([inboundShipmentId])
+}
+
+model InboundShipment {
+  id         String        @id @default(uuid())
+  externalId String        @unique // ERP Reference ID
+  vendor     String
+  status     String        @default("PENDING") // PENDING, ARRIVED, COMPLETED, CANCELLED
+  items      InboundItem[]
+  units      SerializedUnit[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([externalId])
+}
+
+model InboundItem {
+  id          String          @id @default(uuid())
+  shipmentId  String
+  shipment    InboundShipment @relation(fields: [shipmentId], references: [id])
+  skuId       String
+  sku         SKU             @relation(fields: [skuId], references: [id])
+  expectedQty Int
+  receivedQty Int             @default(0)
+
+  @@index([shipmentId])
+  @@index([skuId])
 }
 
 model StatusAuditLog {

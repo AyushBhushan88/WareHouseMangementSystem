@@ -56,7 +56,7 @@ async function main() {
   }
 
   // 5. Create a SKU
-  const sku = await prisma.sku.upsert({
+  const sku = await prisma.sKU.upsert({
     where: { code: 'SKU-001' },
     update: {},
     create: {

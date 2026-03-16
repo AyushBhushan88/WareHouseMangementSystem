@@ -1,36 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from './db.js'
-import { UnitStatus } from './services/status-manager.js'
+import { StatusManager, UnitStatus } from './services/status-manager.js'
 
-describe('Prisma Extension Status Enforcement', () => {
+describe('Status Enforcement (via StatusManager)', () => {
   let skuId: string
-  let binId: string
 
   beforeAll(async () => {
-    // Ensure we have some data
-    const sku = await (prisma as any).SKU.upsert({
+    const sku = await prisma.sKU.upsert({
       where: { code: 'TEST-SKU' },
       update: {},
       create: { code: 'TEST-SKU', name: 'Test SKU' }
     })
     skuId = sku.id
 
-    const loc = await prisma.location.upsert({
-      where: { code: 'TEST-LOC' },
-      update: {},
-      create: { code: 'TEST-LOC', type: 'BIN', path: 'TEST-LOC' }
-    })
-    binId = loc.id
-
-    // Cleanup existing test unit if any
-    const existing = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } })
+    // Cleanup
+    const existing = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } }) 
     if (existing) {
       await prisma.statusAuditLog.deleteMany({ where: { unitId: existing.id } })
       await prisma.serializedUnit.delete({ where: { id: existing.id } })
     }
   })
 
-  it('should allow valid transition INBOUND -> IN_STOCK', async () => {
+  it('should allow valid transition INBOUND -> IN_STOCK via StatusManager', async () => {
     const unit = await prisma.serializedUnit.create({
       data: {
         serialNumber: 'TEST-SER-001',
@@ -39,25 +30,24 @@ describe('Prisma Extension Status Enforcement', () => {
       }
     })
 
-    await expect(prisma.serializedUnit.update({
-      where: { id: unit.id },
-      data: { status: UnitStatus.IN_STOCK }
-    })).resolves.toBeDefined()
+    await expect(StatusManager.updateStatus(prisma, unit.id, UnitStatus.IN_STOCK))
+      .resolves.toBeDefined()
+    
+    const logs = await prisma.statusAuditLog.findMany({ where: { unitId: unit.id } })
+    expect(logs.length).toBe(1)
+    expect(logs[0].fromStatus).toBe(UnitStatus.INBOUND)
+    expect(logs[0].toStatus).toBe(UnitStatus.IN_STOCK)
   })
 
-  it('should reject invalid transition IN_STOCK -> SHIPPED', async () => {
-    const unit = await prisma.serializedUnit.findUnique({
-      where: { serialNumber: 'TEST-SER-001' }
-    })
+  it('should reject invalid transition IN_STOCK -> SHIPPED via StatusManager', async () => {
+    const unit = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } })
 
-    await expect(prisma.serializedUnit.update({
-      where: { id: unit!.id },
-      data: { status: UnitStatus.SHIPPED }
-    })).rejects.toThrow(/Invalid status transition/)
+    await expect(StatusManager.updateStatus(prisma, unit!.id, UnitStatus.SHIPPED))
+      .rejects.toThrow(/Invalid status transition/)
   })
 
   afterAll(async () => {
-    const unit = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } })
+    const unit = await prisma.serializedUnit.findUnique({ where: { serialNumber: 'TEST-SER-001' } })     
     if (unit) {
       await prisma.statusAuditLog.deleteMany({ where: { unitId: unit.id } })
       await prisma.serializedUnit.delete({ where: { id: unit.id } })
